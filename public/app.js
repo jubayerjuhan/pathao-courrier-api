@@ -14,6 +14,7 @@ const els = {
   search: document.getElementById('search'),
   syncBtn: document.getElementById('syncBtn'),
   importBtn: document.getElementById('importBtn'),
+  importAllBtn: document.getElementById('importAllBtn'),
   baseUrl: document.getElementById('baseUrl'),
   drawer: document.getElementById('drawer'),
   drawerTitle: document.getElementById('drawerTitle'),
@@ -82,6 +83,20 @@ function flash(message, variant = 'is-ok') {
   els.notice.hidden = false;
 }
 
+/** Return rate as text, with the ratio it came from. Null means nothing settled. */
+function percent(value) {
+  return value === null || value === undefined ? '—' : `${value.toFixed(1)}%`;
+}
+
+/** Low return rates read green, high ones red — the thresholds are advisory. */
+function rateChip(rate, settled) {
+  if (rate === null || rate === undefined || !settled) {
+    return '<span class="chip chip-neutral">no settled parcels</span>';
+  }
+  const variant = rate >= 30 ? 'chip-danger' : rate >= 15 ? 'chip-warn' : 'chip-ok';
+  return `<span class="chip ${variant}">${percent(rate)}</span>`;
+}
+
 function emptyState(title, body) {
   return `<div class="empty"><h3>${esc(title)}</h3><p>${body}</p></div>`;
 }
@@ -116,6 +131,11 @@ async function renderStats() {
       <div class="stat-label">Awaiting invoice</div>
       <div class="stat-value">${data.uninvoiced_order_count}</div>
       <div class="stat-sub">tracked, not yet invoiced</div>
+    </div>
+    <div class="stat" title="Returned ÷ (delivered + returned), across forward consignments that reached a final outcome. Return and exchange legs, in-flight parcels and pickup failures are excluded.">
+      <div class="stat-label">Return rate</div>
+      <div class="stat-value ${data.return_rate >= 30 ? 'is-accent' : ''}">${percent(data.return_rate)}</div>
+      <div class="stat-sub">${data.settled_returned_count} returned of ${data.settled_count} settled</div>
     </div>`;
 }
 
@@ -140,6 +160,7 @@ async function renderInvoices() {
           <th>Invoice</th>
           <th>Orders</th>
           <th>Breakdown</th>
+          <th class="num">Return rate</th>
           <th class="num">Collected</th>
           <th class="num">Delivery fee</th>
           <th class="num">Net payable</th>
@@ -159,6 +180,10 @@ async function renderInvoices() {
                 ${invoice.in_transit_count ? `<span class="chip chip-warn">${invoice.in_transit_count} in transit</span>` : ''}
                 ${invoice.returned_count ? `<span class="chip chip-danger">${invoice.returned_count} returned</span>` : ''}
               </div>
+            </td>
+            <td class="num">
+              ${rateChip(invoice.return_rate, invoice.settled_count)}
+              <div class="sub">${invoice.settled_returned_count} of ${invoice.settled_count} settled</div>
             </td>
             <td class="num">${money(invoice.total_collected)}</td>
             <td class="num">${money(invoice.total_delivery_fee)}</td>
@@ -263,6 +288,13 @@ async function openInvoice(invoiceId) {
         <div class="stat-label">Net payable</div>
         <div class="stat-value is-accent">${money(data.net_payable)}</div>
       </div>
+      <div class="stat" title="Returned ÷ (delivered + returned) within this invoice. Return and exchange legs, in-flight parcels and pickup failures are excluded.">
+        <div class="stat-label">Return rate</div>
+        <div class="stat-value">${percent(data.return_rate)}</div>
+        <div class="stat-sub">
+          ${data.settled_returned_count} returned, ${data.settled_delivered_count} delivered
+        </div>
+      </div>
     </section>
     <div class="panel">${orderTable(data.orders, { showInvoice: false })}</div>`;
   els.drawer.hidden = false;
@@ -299,6 +331,26 @@ els.syncBtn.addEventListener('click', async () => {
   } finally {
     els.syncBtn.disabled = false;
     els.syncBtn.textContent = 'Sync from Pathao';
+  }
+});
+
+els.importAllBtn.addEventListener('click', async () => {
+  els.importAllBtn.disabled = true;
+  els.importAllBtn.textContent = 'Importing…';
+  try {
+    const { data } = await api('/api/orders/import-all', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    });
+    flash(
+      `Imported ${data.fetched} order(s) across ${data.pages} page(s) — ${data.invoiced} already invoiced.`,
+    );
+    await render();
+  } catch (error) {
+    flash(error.message, 'is-error');
+  } finally {
+    els.importAllBtn.disabled = false;
+    els.importAllBtn.textContent = 'Import all from Pathao';
   }
 });
 

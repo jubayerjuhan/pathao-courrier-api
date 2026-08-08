@@ -82,6 +82,11 @@ export const importOrdersSchema = z.object({
 
 export type ImportEntry = z.infer<typeof importEntrySchema>;
 
+export const importAllSchema = z.object({
+  /** Stop after this many pages of 40. Omit to walk the whole history. */
+  max_pages: z.number().int().positive().max(500).optional(),
+});
+
 export const syncSchema = z.object({
   limit: z.number().int().positive().max(1000).optional(),
   only_uninvoiced: z.boolean().optional(),

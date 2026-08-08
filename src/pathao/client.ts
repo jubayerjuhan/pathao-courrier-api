@@ -10,6 +10,7 @@ import type {
   CreateOrderResponse,
   CreateStoreInput,
   CreateStoreResponse,
+  MerchantOrderPage,
   OrderShortInfo,
   PathaoEnvelope,
   PathaoListData,
@@ -114,6 +115,19 @@ export class PathaoClient {
     const envelope = await this.#authed<PathaoEnvelope<OrderShortInfo>>({
       method: 'GET',
       path: `/aladdin/api/v1/orders/${encodeURIComponent(consignmentId)}/info`,
+    });
+    return envelope.data;
+  }
+
+  /**
+   * GET /aladdin/api/v1/orders/all — one page of the merchant's own orders.
+   *
+   * Pathao paginates this at 40 rows; `listAllOrders` walks the pages.
+   */
+  async listOrdersPage(page = 1): Promise<MerchantOrderPage> {
+    const envelope = await this.#authed<PathaoEnvelope<MerchantOrderPage>>({
+      method: 'GET',
+      path: `/aladdin/api/v1/orders/all?page=${page}`,
     });
     return envelope.data;
   }

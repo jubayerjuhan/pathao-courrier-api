@@ -1,7 +1,12 @@
 import { Router } from 'express';
 import type { AppContext } from '../context.js';
 import { asyncHandler, boolParam, intParam, stringParam } from './helpers.js';
-import { bulkOrderSchema, createOrderSchema, importOrdersSchema } from './schemas.js';
+import {
+  bulkOrderSchema,
+  createOrderSchema,
+  importAllSchema,
+  importOrdersSchema,
+} from './schemas.js';
 
 export function orderRoutes(ctx: AppContext): Router {
   const router = Router();
@@ -73,6 +78,18 @@ export function orderRoutes(ctx: AppContext): Router {
         data: { imported, failed },
         meta: { imported: imported.length, failed: failed.length },
       });
+    }),
+  );
+
+  /** Pulls the merchant's entire Pathao order history into local tracking. */
+  router.post(
+    '/import-all',
+    asyncHandler(async (req, res) => {
+      const { max_pages: maxPages } = importAllSchema.parse(req.body ?? {});
+      const report = await ctx.orderService.importAllFromPathao(
+        maxPages !== undefined ? { maxPages } : {},
+      );
+      res.json({ data: report });
     }),
   );
 

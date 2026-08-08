@@ -100,6 +100,42 @@ export interface OrderShortInfo {
   invoice_id: string | null;
 }
 
+/**
+ * A row from `GET /orders/all` — the merchant's own order list.
+ *
+ * Richer than `OrderShortInfo`: it carries the money fields and the invoice id,
+ * so a consignment can be tracked from this alone without a per-order call.
+ */
+export interface MerchantOrder {
+  order_consignment_id: string;
+  merchant_order_id: string | null;
+  order_created_at: string | null;
+  order_description: string | null;
+  recipient_name: string | null;
+  recipient_address: string | null;
+  recipient_phone: string | null;
+  /** What the rider collects from the recipient. */
+  order_amount: number | null;
+  delivery_fee: number | null;
+  /** Delivery fee plus COD and other charges. */
+  total_fee: number | null;
+  order_status: string | null;
+  order_status_updated_at: string | null;
+  order_invoice_id: string | null;
+  store_name: string | null;
+  order_type: string | null;
+  billing_status: string | null;
+}
+
+/** The paginated envelope `GET /orders/all` returns. */
+export interface MerchantOrderPage {
+  data: MerchantOrder[];
+  total: number;
+  current_page: number;
+  per_page: number;
+  last_page: number;
+}
+
 export interface City {
   city_id: number;
   city_name: string;

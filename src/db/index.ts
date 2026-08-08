@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS orders (
   delivery_fee        REAL    NOT NULL DEFAULT 0,
   order_status        TEXT,
   order_status_slug   TEXT,
+  -- "Delivery", "Return" or "Exchange" as reported by GET /orders/all. Return
+  -- and exchange rows are the back-leg of a parcel already counted as a
+  -- delivery, so return-rate maths must exclude them. Null for orders created
+  -- through this app, which are always forward deliveries.
+  order_type          TEXT,
   invoice_id          TEXT,
   pathao_updated_at   TEXT,
   created_at          TEXT    NOT NULL,
@@ -36,6 +41,19 @@ CREATE TABLE IF NOT EXISTS orders (
 CREATE INDEX IF NOT EXISTS idx_orders_invoice_id ON orders (invoice_id);
 CREATE INDEX IF NOT EXISTS idx_orders_store_id   ON orders (store_id);
 `;
+
+/** Columns added after the first release, applied to databases already on disk. */
+const ADDED_COLUMNS: { table: string; column: string; definition: string }[] = [
+  { table: 'orders', column: 'order_type', definition: 'TEXT' },
+];
+
+function applyMigrations(db: Database): void {
+  for (const { table, column, definition } of ADDED_COLUMNS) {
+    const existing = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    if (existing.some((row) => row.name === column)) continue;
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+  }
+}
 
 /**
  * Opens the SQLite database and applies the schema.
@@ -50,5 +68,6 @@ export function openDatabase(file: string): Database {
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
+  applyMigrations(db);
   return db;
 }

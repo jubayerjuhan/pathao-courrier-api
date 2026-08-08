@@ -12,9 +12,12 @@ invoices in a web dashboard.
 ## How invoices work here (read this first)
 
 **The Pathao Merchant API has no invoice endpoint.** There is no
-"list my invoices" and no "list my orders" call in the documentation. The only
-place an invoice ever appears is the `invoice_id` field on a single order's
-short info:
+"list my invoices" call. Orders *can* be listed — `GET /aladdin/api/v1/orders/all`
+returns the merchant's own history, paginated 40 to a page, and it is the
+fastest way to fill this app (see `POST /api/orders/import-all`). It is absent
+from the merchant integration docs, so treat it as undocumented rather than
+guaranteed. Per consignment, an invoice appears as the `invoice_id` field on
+its short info:
 
 ```
 GET /aladdin/api/v1/orders/{consignment_id}/info
@@ -25,9 +28,9 @@ GET /aladdin/api/v1/orders/{consignment_id}/info
 
 So invoices are **derived**, not fetched:
 
-1. Every order you create through this app is recorded locally (Pathao cannot
-   list them back to you, so if it is not tracked here it can never appear on
-   an invoice).
+1. Orders are recorded locally — created through this app, imported by
+   consignment id, or pulled wholesale with **Import all from Pathao**. An
+   order not tracked here can never appear on an invoice.
 2. **Sync** re-reads each tracked consignment's short info and stores the
    `invoice_id`, status and update time it returns.
 3. Orders sharing an `invoice_id` are grouped into one invoice, with totals
@@ -42,6 +45,31 @@ Two consequences worth knowing:
   `delivery_fee` are known only for orders this app created. When importing an
   existing consignment, pass the amounts alongside the id or it lands on its
   invoice valued at zero.
+
+---
+
+## Return rate
+
+The dashboard reports a return rate in two places: one tile across everything
+tracked, and a column plus a drawer figure per invoice.
+
+```
+return rate = returned ÷ (delivered + returned)
+```
+
+The denominator is deliberately narrow — only **forward consignments that
+reached a final outcome** count:
+
+| Excluded | Why |
+| --- | --- |
+| Return and exchange legs (`order_type` = Return/Exchange) | Pathao books the trip back as its own consignment sharing the invoice. Counting it would tally the same parcel twice. |
+| In transit, at hub, on the way | No verdict yet. |
+| Pickup failed / cancelled | Never entered the network, so it is neither a delivery nor a return. |
+
+`return_rate` is `null` — shown as `—` — when nothing has settled yet. Both
+`/api/invoices` and `/api/invoices/summary` expose `settled_count`,
+`settled_delivered_count` and `settled_returned_count` alongside it, so the
+ratio behind the percentage is always visible.
 
 ---
 
@@ -121,6 +149,7 @@ Every route is under `/api`. Responses are `{ data, meta? }`; errors are
 | `POST` | `/api/orders` | Create at Pathao **and** track locally |
 | `POST` | `/api/orders/bulk` | Bulk create (Pathao answers 202, no consignment ids) |
 | `POST` | `/api/orders/import` | Track consignments created elsewhere |
+| `POST` | `/api/orders/import-all` | Pull the whole Pathao order history into tracking. Body: `{ max_pages? }` |
 | `GET` | `/api/orders/:consignmentId` | Local record + a live short-info read |
 | `POST` | `/api/sync` | Refresh tracked orders. Body: `{ limit?, only_uninvoiced?, concurrency? }` |
 

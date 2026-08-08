@@ -14,6 +14,8 @@ export interface OrderRow {
   delivery_fee: number;
   order_status: string | null;
   order_status_slug: string | null;
+  /** "Delivery", "Return", "Exchange" — null for orders created through this app. */
+  order_type: string | null;
   invoice_id: string | null;
   pathao_updated_at: string | null;
   created_at: string;
@@ -34,6 +36,7 @@ export interface OrderSeed {
   amountToCollect?: number | null;
   deliveryFee?: number | null;
   orderStatus?: string | null;
+  orderType?: string | null;
 }
 
 /** Fields refreshed from `GET /orders/{id}/info` on every sync. */
@@ -74,8 +77,8 @@ export class OrderRepository {
         `INSERT INTO orders (
            consignment_id, merchant_order_id, store_id, recipient_name, recipient_phone,
            recipient_address, item_description, item_quantity, item_weight,
-           amount_to_collect, delivery_fee, order_status, created_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), COALESCE(?, 0), ?, ?)
+           amount_to_collect, delivery_fee, order_status, order_type, created_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, 0), COALESCE(?, 0), ?, ?, ?)
          ON CONFLICT(consignment_id) DO UPDATE SET
            merchant_order_id = COALESCE(excluded.merchant_order_id, orders.merchant_order_id),
            store_id          = COALESCE(excluded.store_id,          orders.store_id),
@@ -86,6 +89,7 @@ export class OrderRepository {
            item_quantity     = COALESCE(excluded.item_quantity,     orders.item_quantity),
            item_weight       = COALESCE(excluded.item_weight,       orders.item_weight),
            order_status      = COALESCE(excluded.order_status,      orders.order_status),
+           order_type        = COALESCE(excluded.order_type,        orders.order_type),
            -- These two re-bind the raw seed values rather than reading them off
            -- \`excluded\`, whose columns already went through COALESCE(?, 0) above:
            -- an unset amount would otherwise arrive here as 0 and wipe the row.
@@ -105,6 +109,7 @@ export class OrderRepository {
         seed.amountToCollect ?? null,
         seed.deliveryFee ?? null,
         seed.orderStatus ?? null,
+        seed.orderType ?? null,
         new Date().toISOString(),
         // Bound again for the DO UPDATE clause.
         seed.amountToCollect ?? null,

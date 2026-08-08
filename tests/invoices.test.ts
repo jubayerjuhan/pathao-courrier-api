@@ -14,6 +14,7 @@ function seed(
   fee: number,
   invoiceId: string | null,
   status: string,
+  orderType?: string,
 ): void {
   orders.upsertSeed({
     consignmentId,
@@ -21,6 +22,7 @@ function seed(
     recipientName: `Recipient ${consignmentId}`,
     amountToCollect: amount,
     deliveryFee: fee,
+    ...(orderType !== undefined ? { orderType } : {}),
   });
   orders.applySync({
     consignmentId,
@@ -79,6 +81,43 @@ describe('InvoiceRepository', () => {
     assert.equal(invoice.delivered_count, 1, 'Delivery_Failed must not count as delivered');
     assert.equal(invoice.returned_count, 2);
     assert.equal(invoice.in_transit_count, 1);
+  });
+
+  it('rates returns against settled forward parcels only', () => {
+    seed('DT1', 100, 10, 'INV-1', 'Delivered');
+    seed('DT2', 100, 10, 'INV-1', 'Partial Delivery');
+    seed('DT3', 100, 10, 'INV-1', 'Return');
+    // None of these belong in the ratio: still moving, never picked up, or the
+    // back-leg of a parcel already counted above.
+    seed('DT4', 100, 10, 'INV-1', 'In Transit');
+    seed('DT5', 100, 10, 'INV-1', 'At Delivery Hub');
+    seed('DT6', 100, 10, 'INV-1', 'Pickup Failed');
+    seed('RR1', 0, 10, 'INV-1', 'Returned To Merchant', 'Return');
+    seed('ER1', 0, 10, 'INV-1', 'Exchange', 'Exchange');
+
+    const invoice = invoices.findById('INV-1')!;
+    assert.equal(invoice.settled_delivered_count, 2);
+    assert.equal(invoice.settled_returned_count, 1);
+    assert.equal(invoice.settled_count, 3);
+    assert.equal(invoice.return_rate, 33.3);
+  });
+
+  it('reports no return rate when nothing has settled', () => {
+    seed('DT1', 100, 10, 'INV-1', 'In Transit');
+
+    assert.equal(invoices.findById('INV-1')!.return_rate, null);
+    assert.equal(invoices.totals().return_rate, null);
+  });
+
+  it('rates returns across the whole portfolio, invoiced or not', () => {
+    seed('DT1', 100, 10, 'INV-1', 'Delivered');
+    seed('DT2', 100, 10, null, 'Return');
+    seed('RR1', 0, 10, 'INV-1', 'Returned To Merchant', 'Return');
+
+    const totals = invoices.totals();
+    assert.equal(totals.settled_count, 2, 'the return leg is not a third parcel');
+    assert.equal(totals.settled_returned_count, 1);
+    assert.equal(totals.return_rate, 50);
   });
 
   it('reports portfolio totals split by invoiced state', () => {

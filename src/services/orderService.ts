@@ -1,6 +1,23 @@
 import type { OrderRepository } from '../db/orderRepository.js';
 import type { PathaoClient } from '../pathao/client.js';
-import type { CreateOrderInput, CreateOrderResponse, OrderShortInfo } from '../pathao/types.js';
+import type {
+  CreateOrderInput,
+  CreateOrderResponse,
+  MerchantOrder,
+  OrderShortInfo,
+} from '../pathao/types.js';
+
+export interface ImportAllReport {
+  /** Orders read from Pathao across every page. */
+  fetched: number;
+  /** Pages walked, and how many Pathao said there were. */
+  pages: number;
+  totalReported: number;
+  /** Of those fetched, how many already carried an invoice id. */
+  invoiced: number;
+  startedAt: string;
+  finishedAt: string;
+}
 
 /** Merchant-supplied fields for an order being brought under local tracking. */
 export interface ImportDetails {
@@ -17,9 +34,8 @@ export interface ImportDetails {
 /**
  * Creates orders through Pathao and records them locally.
  *
- * Local tracking is required, not incidental: the merchant API has no
- * "list my orders" endpoint, so an order not stored here can never appear on
- * an invoice.
+ * Orders reach local tracking three ways: created here, imported by
+ * consignment id, or pulled wholesale from `GET /orders/all`.
  */
 export class OrderService {
   readonly #client: PathaoClient;
@@ -86,6 +102,80 @@ export class OrderService {
     });
 
     return info;
+  }
+
+  /**
+   * Pulls the merchant's whole order history from `GET /orders/all` into local
+   * tracking, one page at a time.
+   *
+   * Unlike `importByConsignmentId` this needs no ids up front and carries the
+   * money fields, so consignments land on their invoices already valued.
+   */
+  async importAllFromPathao(options: { maxPages?: number } = {}): Promise<ImportAllReport> {
+    const startedAt = new Date().toISOString();
+    const maxPages = options.maxPages ?? Infinity;
+
+    let page = 1;
+    let lastPage = 1;
+    let fetched = 0;
+    let invoiced = 0;
+    let totalReported = 0;
+
+    while (page <= lastPage && page <= maxPages) {
+      const result = await this.#client.listOrdersPage(page);
+      const rows = result?.data ?? [];
+      lastPage = Number(result?.last_page ?? page);
+      totalReported = Number(result?.total ?? totalReported);
+
+      for (const row of rows) {
+        this.#trackMerchantOrder(row);
+        fetched += 1;
+        if (row.order_invoice_id) invoiced += 1;
+      }
+
+      // A page Pathao reports but does not fill would loop forever otherwise.
+      if (rows.length === 0) break;
+      page += 1;
+    }
+
+    return {
+      fetched,
+      pages: page - 1,
+      totalReported,
+      invoiced,
+      startedAt,
+      finishedAt: new Date().toISOString(),
+    };
+  }
+
+  /** Writes one `/orders/all` row through both the seed and the sync path. */
+  #trackMerchantOrder(row: MerchantOrder): void {
+    const consignmentId = row.order_consignment_id;
+    if (!consignmentId) return;
+
+    this.#orders.upsertSeed({
+      consignmentId,
+      merchantOrderId: row.merchant_order_id ?? null,
+      recipientName: row.recipient_name ?? null,
+      recipientPhone: row.recipient_phone ?? null,
+      recipientAddress: row.recipient_address ?? null,
+      itemDescription: row.order_description ?? null,
+      amountToCollect: row.order_amount ?? null,
+      // `total_fee` includes COD and surcharges; `delivery_fee` is the carriage
+      // alone. Prefer the total, since that is what Pathao nets off the invoice.
+      deliveryFee: row.total_fee ?? row.delivery_fee ?? null,
+      orderStatus: row.order_status ?? null,
+      orderType: row.order_type ?? null,
+    });
+
+    this.#orders.applySync({
+      consignmentId,
+      merchantOrderId: row.merchant_order_id ?? null,
+      orderStatus: row.order_status ?? null,
+      orderStatusSlug: row.order_status ? row.order_status.toLowerCase().replace(/\s+/g, '_') : null,
+      invoiceId: row.order_invoice_id ?? null,
+      pathaoUpdatedAt: row.order_status_updated_at ?? row.order_created_at ?? null,
+    });
   }
 
   /**
