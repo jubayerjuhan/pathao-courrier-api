@@ -1,4 +1,4 @@
-import type { Database } from './index.js';
+import type { Database, Param } from './index.js';
 
 export interface InvoiceSummary {
   invoice_id: string;
@@ -85,9 +85,9 @@ export class InvoiceRepository {
     this.#db = db;
   }
 
-  list(filters: InvoiceFilters = {}): InvoiceSummary[] {
+  async list(filters: InvoiceFilters = {}): Promise<InvoiceSummary[]> {
     const clauses = ['invoice_id IS NOT NULL'];
-    const params: (string | number)[] = [];
+    const params: Param[] = [];
 
     if (filters.storeId !== undefined) {
       clauses.push('store_id = ?');
@@ -104,26 +104,24 @@ export class InvoiceRepository {
     const limit = filters.limit ?? 100;
     const offset = filters.offset ?? 0;
 
-    return this.#db
-      .prepare(
-        `${this.#selectAggregate()}
+    const rows = await this.#db.all<InvoiceSummary>(
+      `${this.#selectAggregate()}
          WHERE ${clauses.join(' AND ')}
          GROUP BY invoice_id
          ORDER BY last_updated_at DESC, invoice_id DESC
          LIMIT ? OFFSET ?`,
-      )
-      .all(...params, limit, offset)
-      .map((row) => this.#withReturnRate(row as unknown as InvoiceSummary));
+      [...params, limit, offset],
+    );
+    return rows.map((row) => this.#withReturnRate(row));
   }
 
-  findById(invoiceId: string): InvoiceSummary | null {
-    const row = this.#db
-      .prepare(
-        `${this.#selectAggregate()}
+  async findById(invoiceId: string): Promise<InvoiceSummary | null> {
+    const row = await this.#db.get<InvoiceSummary>(
+      `${this.#selectAggregate()}
          WHERE invoice_id = ?
          GROUP BY invoice_id`,
-      )
-      .get(invoiceId) as InvoiceSummary | undefined;
+      [invoiceId],
+    );
     return row ? this.#withReturnRate(row) : null;
   }
 
@@ -140,13 +138,12 @@ export class InvoiceRepository {
     };
   }
 
-  totals(): PortfolioTotals {
+  async totals(): Promise<PortfolioTotals> {
     const status = "LOWER(COALESCE(order_status_slug, order_status, ''))";
     const { forward, settledDelivered, settledReturned } = RETURN_RATE_SQL(status);
 
-    const row = this.#db
-      .prepare(
-        `SELECT
+    const row = await this.#db.get<Omit<PortfolioTotals, 'net_payable' | 'settled_count' | 'return_rate'>>(
+      `SELECT
            COUNT(DISTINCT invoice_id)                                          AS invoice_count,
            COALESCE(SUM(CASE WHEN ${forward} AND ${settledDelivered} THEN 1 ELSE 0 END), 0) AS settled_delivered_count,
            COALESCE(SUM(CASE WHEN ${forward} AND ${settledReturned}  THEN 1 ELSE 0 END), 0) AS settled_returned_count,
@@ -155,19 +152,18 @@ export class InvoiceRepository {
            COALESCE(SUM(CASE WHEN invoice_id IS NOT NULL THEN amount_to_collect ELSE 0 END), 0) AS total_collected,
            COALESCE(SUM(CASE WHEN invoice_id IS NOT NULL THEN delivery_fee      ELSE 0 END), 0) AS total_delivery_fee
          FROM orders`,
-      )
-      .get() as Omit<PortfolioTotals, 'net_payable' | 'settled_count' | 'return_rate'>;
+    );
 
-    const settledDeliveredCount = Number(row.settled_delivered_count);
-    const settledReturnedCount = Number(row.settled_returned_count);
+    const settledDeliveredCount = Number(row?.settled_delivered_count ?? 0);
+    const settledReturnedCount = Number(row?.settled_returned_count ?? 0);
 
     return {
-      invoice_count: Number(row.invoice_count),
-      invoiced_order_count: Number(row.invoiced_order_count),
-      uninvoiced_order_count: Number(row.uninvoiced_order_count),
-      total_collected: Number(row.total_collected),
-      total_delivery_fee: Number(row.total_delivery_fee),
-      net_payable: Number(row.total_collected) - Number(row.total_delivery_fee),
+      invoice_count: Number(row?.invoice_count ?? 0),
+      invoiced_order_count: Number(row?.invoiced_order_count ?? 0),
+      uninvoiced_order_count: Number(row?.uninvoiced_order_count ?? 0),
+      total_collected: Number(row?.total_collected ?? 0),
+      total_delivery_fee: Number(row?.total_delivery_fee ?? 0),
+      net_payable: Number(row?.total_collected ?? 0) - Number(row?.total_delivery_fee ?? 0),
       settled_delivered_count: settledDeliveredCount,
       settled_returned_count: settledReturnedCount,
       settled_count: settledDeliveredCount + settledReturnedCount,

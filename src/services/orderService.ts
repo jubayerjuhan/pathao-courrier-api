@@ -49,7 +49,7 @@ export class OrderService {
   async createOrder(input: CreateOrderInput): Promise<CreateOrderResponse> {
     const created = await this.#client.createOrder(input);
 
-    this.#orders.upsertSeed({
+    await this.#orders.upsertSeed({
       consignmentId: created.consignment_id,
       merchantOrderId: created.merchant_order_id ?? input.merchant_order_id ?? null,
       storeId: input.store_id,
@@ -80,7 +80,7 @@ export class OrderService {
     const consignmentId = details.consignment_id;
     const info = await this.#client.getOrderInfo(consignmentId);
 
-    this.#orders.upsertSeed({
+    await this.#orders.upsertSeed({
       consignmentId: info.consignment_id ?? consignmentId,
       merchantOrderId: info.merchant_order_id ?? null,
       orderStatus: info.order_status ?? null,
@@ -92,7 +92,7 @@ export class OrderService {
       amountToCollect: details.amount_to_collect ?? null,
       deliveryFee: details.delivery_fee ?? null,
     });
-    this.#orders.applySync({
+    await this.#orders.applySync({
       consignmentId: info.consignment_id ?? consignmentId,
       merchantOrderId: info.merchant_order_id ?? null,
       orderStatus: info.order_status ?? null,
@@ -128,7 +128,7 @@ export class OrderService {
       totalReported = Number(result?.total ?? totalReported);
 
       for (const row of rows) {
-        this.#trackMerchantOrder(row);
+        await this.#trackMerchantOrder(row);
         fetched += 1;
         if (row.order_invoice_id) invoiced += 1;
       }
@@ -149,11 +149,11 @@ export class OrderService {
   }
 
   /** Writes one `/orders/all` row through both the seed and the sync path. */
-  #trackMerchantOrder(row: MerchantOrder): void {
+  async #trackMerchantOrder(row: MerchantOrder): Promise<void> {
     const consignmentId = row.order_consignment_id;
     if (!consignmentId) return;
 
-    this.#orders.upsertSeed({
+    await this.#orders.upsertSeed({
       consignmentId,
       merchantOrderId: row.merchant_order_id ?? null,
       recipientName: row.recipient_name ?? null,
@@ -168,7 +168,7 @@ export class OrderService {
       orderType: row.order_type ?? null,
     });
 
-    this.#orders.applySync({
+    await this.#orders.applySync({
       consignmentId,
       merchantOrderId: row.merchant_order_id ?? null,
       orderStatus: row.order_status ?? null,

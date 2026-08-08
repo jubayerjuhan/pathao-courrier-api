@@ -11,25 +11,30 @@ import {
 export function orderRoutes(ctx: AppContext): Router {
   const router = Router();
 
-  router.get('/', (req, res) => {
-    const filters = {
-      ...(stringParam(req.query.invoice_id) !== undefined
-        ? { invoiceId: stringParam(req.query.invoice_id)! }
-        : {}),
-      ...(stringParam(req.query.status) !== undefined
-        ? { status: stringParam(req.query.status)! }
-        : {}),
-      ...(stringParam(req.query.search) !== undefined
-        ? { search: stringParam(req.query.search)! }
-        : {}),
-      ...(intParam(req.query.store_id) !== undefined ? { storeId: intParam(req.query.store_id)! } : {}),
-      ...(boolParam(req.query.invoiced) !== undefined
-        ? { invoiced: boolParam(req.query.invoiced)! }
-        : {}),
-    };
-    const data = ctx.orders.list(filters);
-    res.json({ data, meta: { count: data.length } });
-  });
+  router.get(
+    '/',
+    asyncHandler(async (req, res) => {
+      const filters = {
+        ...(stringParam(req.query.invoice_id) !== undefined
+          ? { invoiceId: stringParam(req.query.invoice_id)! }
+          : {}),
+        ...(stringParam(req.query.status) !== undefined
+          ? { status: stringParam(req.query.status)! }
+          : {}),
+        ...(stringParam(req.query.search) !== undefined
+          ? { search: stringParam(req.query.search)! }
+          : {}),
+        ...(intParam(req.query.store_id) !== undefined
+          ? { storeId: intParam(req.query.store_id)! }
+          : {}),
+        ...(boolParam(req.query.invoiced) !== undefined
+          ? { invoiced: boolParam(req.query.invoiced)! }
+          : {}),
+      };
+      const data = await ctx.orders.list(filters);
+      res.json({ data, meta: { count: data.length } });
+    }),
+  );
 
   /** Creates the order at Pathao and starts tracking it locally. */
   router.post(
@@ -98,7 +103,7 @@ export function orderRoutes(ctx: AppContext): Router {
     '/:consignmentId',
     asyncHandler(async (req, res) => {
       const consignmentId = req.params.consignmentId!;
-      const local = ctx.orders.findById(consignmentId);
+      const local = await ctx.orders.findById(consignmentId);
       const remote = await ctx.client.getOrderInfo(consignmentId);
       res.json({ data: { local, remote } });
     }),

@@ -14,23 +14,23 @@ export interface StoredToken {
  * implementation and `MemoryTokenStore` keeps tests off disk.
  */
 export interface TokenStore {
-  read(): StoredToken | null;
-  write(token: StoredToken): void;
-  clear(): void;
+  read(): Promise<StoredToken | null>;
+  write(token: StoredToken): Promise<void>;
+  clear(): Promise<void>;
 }
 
 export class MemoryTokenStore implements TokenStore {
   #token: StoredToken | null = null;
 
-  read(): StoredToken | null {
+  async read(): Promise<StoredToken | null> {
     return this.#token;
   }
 
-  write(token: StoredToken): void {
+  async write(token: StoredToken): Promise<void> {
     this.#token = token;
   }
 
-  clear(): void {
+  async clear(): Promise<void> {
     this.#token = null;
   }
 }

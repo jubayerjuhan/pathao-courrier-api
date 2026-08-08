@@ -2,8 +2,12 @@ import type { Database } from './index.js';
 import type { StoredToken, TokenStore } from '../pathao/tokenStore.js';
 
 /**
- * Keeps the issued token in SQLite so restarts reuse it instead of burning a
- * fresh grant on every boot, as the Pathao docs recommend.
+ * Keeps the issued token in the database so restarts reuse it instead of
+ * burning a fresh grant on every boot, as the Pathao docs recommend.
+ *
+ * This matters more on serverless than it did on a long-lived server: every
+ * cold start is effectively a restart, so without a shared store each one
+ * would issue its own token.
  */
 export class SqliteTokenStore implements TokenStore {
   readonly #db: Database;
@@ -12,14 +16,13 @@ export class SqliteTokenStore implements TokenStore {
     this.#db = db;
   }
 
-  read(): StoredToken | null {
-    const row = this.#db
-      .prepare(
-        'SELECT access_token, refresh_token, token_type, expires_at FROM oauth_tokens WHERE id = 1',
-      )
-      .get() as
-      | { access_token: string; refresh_token: string; token_type: string; expires_at: number }
-      | undefined;
+  async read(): Promise<StoredToken | null> {
+    const row = await this.#db.get<{
+      access_token: string;
+      refresh_token: string;
+      token_type: string;
+      expires_at: number;
+    }>('SELECT access_token, refresh_token, token_type, expires_at FROM oauth_tokens WHERE id = 1');
 
     if (!row) return null;
     return {
@@ -30,21 +33,20 @@ export class SqliteTokenStore implements TokenStore {
     };
   }
 
-  write(token: StoredToken): void {
-    this.#db
-      .prepare(
-        `INSERT INTO oauth_tokens (id, access_token, refresh_token, token_type, expires_at)
+  async write(token: StoredToken): Promise<void> {
+    await this.#db.run(
+      `INSERT INTO oauth_tokens (id, access_token, refresh_token, token_type, expires_at)
          VALUES (1, ?, ?, ?, ?)
          ON CONFLICT(id) DO UPDATE SET
            access_token  = excluded.access_token,
            refresh_token = excluded.refresh_token,
            token_type    = excluded.token_type,
            expires_at    = excluded.expires_at`,
-      )
-      .run(token.accessToken, token.refreshToken, token.tokenType, token.expiresAt);
+      [token.accessToken, token.refreshToken, token.tokenType, token.expiresAt],
+    );
   }
 
-  clear(): void {
-    this.#db.prepare('DELETE FROM oauth_tokens WHERE id = 1').run();
+  async clear(): Promise<void> {
+    await this.#db.run('DELETE FROM oauth_tokens WHERE id = 1');
   }
 }

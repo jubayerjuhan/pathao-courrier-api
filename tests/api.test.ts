@@ -45,7 +45,7 @@ before(async () => {
     }),
   });
 
-  const db = openDatabase(':memory:');
+  const db = await openDatabase({ url: ':memory:' });
   const client = new PathaoClient({
     credentials: testCredentials,
     tokenStore: new MemoryTokenStore(),
@@ -57,7 +57,7 @@ before(async () => {
   ctx = {
     config: {
       port: 0,
-      databaseFile: ':memory:',
+      database: { url: ':memory:' },
       tokenRefreshLeewaySeconds: 300,
       requestTimeoutMs: 5000,
       pathao: testCredentials,
@@ -115,7 +115,7 @@ describe('HTTP API', () => {
 
     assert.equal(status, 201);
     assert.equal(json.data.consignment_id, 'DT-NEW');
-    assert.equal(ctx.orders.findById('DT-NEW')?.amount_to_collect, 900);
+    assert.equal((await ctx.orders.findById('DT-NEW'))?.amount_to_collect, 900);
   });
 
   it('rejects payloads that violate the documented field rules', async () => {

@@ -1,8 +1,24 @@
-import { DatabaseSync } from 'node:sqlite';
+import { createClient, type Client, type InValue } from '@libsql/client';
 import fs from 'node:fs';
 import path from 'node:path';
 
-export type Database = DatabaseSync;
+/**
+ * Every query in this app goes through these three methods.
+ *
+ * libSQL speaks SQLite's dialect but reaches the database over HTTP, so unlike
+ * `node:sqlite`'s synchronous `DatabaseSync` each call is a promise. That is
+ * what lets the database live off the filesystem — on Turso for deployments,
+ * or a local file during development — instead of needing a mounted disk.
+ */
+export interface Database {
+  run(sql: string, params?: Param[]): Promise<void>;
+  get<T>(sql: string, params?: Param[]): Promise<T | null>;
+  all<T>(sql: string, params?: Param[]): Promise<T[]>;
+  close(): void;
+}
+
+/** Bindable value. `undefined` is not one — pass an explicit null. */
+export type Param = string | number | boolean | bigint | null;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS oauth_tokens (
@@ -47,27 +63,63 @@ const ADDED_COLUMNS: { table: string; column: string; definition: string }[] = [
   { table: 'orders', column: 'order_type', definition: 'TEXT' },
 ];
 
-function applyMigrations(db: Database): void {
+async function applyMigrations(db: Database): Promise<void> {
   for (const { table, column, definition } of ADDED_COLUMNS) {
-    const existing = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+    const existing = await db.all<{ name: string }>(`PRAGMA table_info(${table})`);
     if (existing.some((row) => row.name === column)) continue;
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+    await db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
   }
 }
 
+function wrap(client: Client): Database {
+  return {
+    async run(sql, params = []) {
+      await client.execute({ sql, args: params as InValue[] });
+    },
+    async get<T>(sql: string, params: Param[] = []) {
+      const result = await client.execute({ sql, args: params as InValue[] });
+      return (result.rows[0] as T | undefined) ?? null;
+    },
+    async all<T>(sql: string, params: Param[] = []) {
+      const result = await client.execute({ sql, args: params as InValue[] });
+      return result.rows as unknown as T[];
+    },
+    close() {
+      client.close();
+    },
+  };
+}
+
+export interface DatabaseOptions {
+  /**
+   * `libsql://…` for Turso, `file:…` for a local file, `:memory:` for tests.
+   */
+  url: string;
+  /** Required by Turso, meaningless for local files. */
+  authToken?: string | undefined;
+}
+
 /**
- * Opens the SQLite database and applies the schema.
+ * Connects to the database and brings the schema up to date.
  *
- * Pass `:memory:` for tests. Any other path has its parent directory created.
+ * Safe to call on every boot: the schema is all `IF NOT EXISTS` and the
+ * migrations check `PRAGMA table_info` before touching anything.
  */
-export function openDatabase(file: string): Database {
-  if (file !== ':memory:') {
-    fs.mkdirSync(path.dirname(file), { recursive: true });
+export async function openDatabase(options: DatabaseOptions): Promise<Database> {
+  // Local development points at a file that may sit in a directory nobody has
+  // created yet; libSQL will not make one for us.
+  if (options.url.startsWith('file:')) {
+    fs.mkdirSync(path.dirname(options.url.slice('file:'.length)), { recursive: true });
   }
-  const db = new DatabaseSync(file);
-  db.exec('PRAGMA journal_mode = WAL;');
-  db.exec('PRAGMA foreign_keys = ON;');
-  db.exec(SCHEMA);
-  applyMigrations(db);
+
+  const client = createClient({
+    url: options.url,
+    ...(options.authToken ? { authToken: options.authToken } : {}),
+  });
+  const db = wrap(client);
+
+  // executeMultiple takes the whole script; execute() is one statement only.
+  await client.executeMultiple(SCHEMA);
+  await applyMigrations(db);
   return db;
 }

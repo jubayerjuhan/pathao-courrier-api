@@ -8,15 +8,15 @@ let db: Database;
 let orders: OrderRepository;
 let invoices: InvoiceRepository;
 
-function seed(
+async function seed(
   consignmentId: string,
   amount: number,
   fee: number,
   invoiceId: string | null,
   status: string,
   orderType?: string,
-): void {
-  orders.upsertSeed({
+): Promise<void> {
+  await orders.upsertSeed({
     consignmentId,
     storeId: 1,
     recipientName: `Recipient ${consignmentId}`,
@@ -24,7 +24,7 @@ function seed(
     deliveryFee: fee,
     ...(orderType !== undefined ? { orderType } : {}),
   });
-  orders.applySync({
+  await orders.applySync({
     consignmentId,
     merchantOrderId: null,
     orderStatus: status,
@@ -34,22 +34,22 @@ function seed(
   });
 }
 
-beforeEach(() => {
-  db = openDatabase(':memory:');
+beforeEach(async () => {
+  db = await openDatabase({ url: ":memory:" });
   orders = new OrderRepository(db);
   invoices = new InvoiceRepository(db);
 });
 
 describe('InvoiceRepository', () => {
-  it('groups tracked orders into invoices and nets fees off the collected amount', () => {
-    seed('DT1', 900, 80, 'INV-1', 'Delivered');
-    seed('DT2', 500, 60, 'INV-1', 'Delivered');
-    seed('DT3', 200, 70, 'INV-2', 'Pending');
+  it('groups tracked orders into invoices and nets fees off the collected amount', async () => {
+    await seed('DT1', 900, 80, 'INV-1', 'Delivered');
+    await seed('DT2', 500, 60, 'INV-1', 'Delivered');
+    await seed('DT3', 200, 70, 'INV-2', 'Pending');
 
-    const list = invoices.list();
+    const list = await invoices.list();
     assert.equal(list.length, 2);
 
-    const first = invoices.findById('INV-1')!;
+    const first = (await invoices.findById('INV-1'))!;
     assert.equal(first.order_count, 2);
     assert.equal(first.total_collected, 1400);
     assert.equal(first.total_delivery_fee, 140);
@@ -57,75 +57,75 @@ describe('InvoiceRepository', () => {
     assert.equal(first.delivered_count, 2);
   });
 
-  it('excludes orders Pathao has not invoiced yet', () => {
-    seed('DT1', 900, 80, 'INV-1', 'Delivered');
-    seed('DT2', 500, 60, null, 'Pending');
+  it('excludes orders Pathao has not invoiced yet', async () => {
+    await seed('DT1', 900, 80, 'INV-1', 'Delivered');
+    await seed('DT2', 500, 60, null, 'Pending');
 
     assert.deepEqual(
-      invoices.list().map((invoice) => invoice.invoice_id),
+      (await invoices.list()).map((invoice) => invoice.invoice_id),
       ['INV-1'],
     );
     assert.deepEqual(
-      orders.list({ invoiced: false }).map((order) => order.consignment_id),
+      (await orders.list({ invoiced: false })).map((order) => order.consignment_id),
       ['DT2'],
     );
   });
 
-  it('buckets statuses into delivered, returned and in-transit counts', () => {
-    seed('DT1', 100, 10, 'INV-1', 'Delivered');
-    seed('DT2', 100, 10, 'INV-1', 'Return');
-    seed('DT3', 100, 10, 'INV-1', 'Delivery_Failed');
-    seed('DT4', 100, 10, 'INV-1', 'In_Transit');
+  it('buckets statuses into delivered, returned and in-transit counts', async () => {
+    await seed('DT1', 100, 10, 'INV-1', 'Delivered');
+    await seed('DT2', 100, 10, 'INV-1', 'Return');
+    await seed('DT3', 100, 10, 'INV-1', 'Delivery_Failed');
+    await seed('DT4', 100, 10, 'INV-1', 'In_Transit');
 
-    const invoice = invoices.findById('INV-1')!;
+    const invoice = (await invoices.findById('INV-1'))!;
     assert.equal(invoice.delivered_count, 1, 'Delivery_Failed must not count as delivered');
     assert.equal(invoice.returned_count, 2);
     assert.equal(invoice.in_transit_count, 1);
   });
 
-  it('rates returns against settled forward parcels only', () => {
-    seed('DT1', 100, 10, 'INV-1', 'Delivered');
-    seed('DT2', 100, 10, 'INV-1', 'Partial Delivery');
-    seed('DT3', 100, 10, 'INV-1', 'Return');
+  it('rates returns against settled forward parcels only', async () => {
+    await seed('DT1', 100, 10, 'INV-1', 'Delivered');
+    await seed('DT2', 100, 10, 'INV-1', 'Partial Delivery');
+    await seed('DT3', 100, 10, 'INV-1', 'Return');
     // None of these belong in the ratio: still moving, never picked up, or the
     // back-leg of a parcel already counted above.
-    seed('DT4', 100, 10, 'INV-1', 'In Transit');
-    seed('DT5', 100, 10, 'INV-1', 'At Delivery Hub');
-    seed('DT6', 100, 10, 'INV-1', 'Pickup Failed');
-    seed('RR1', 0, 10, 'INV-1', 'Returned To Merchant', 'Return');
-    seed('ER1', 0, 10, 'INV-1', 'Exchange', 'Exchange');
+    await seed('DT4', 100, 10, 'INV-1', 'In Transit');
+    await seed('DT5', 100, 10, 'INV-1', 'At Delivery Hub');
+    await seed('DT6', 100, 10, 'INV-1', 'Pickup Failed');
+    await seed('RR1', 0, 10, 'INV-1', 'Returned To Merchant', 'Return');
+    await seed('ER1', 0, 10, 'INV-1', 'Exchange', 'Exchange');
 
-    const invoice = invoices.findById('INV-1')!;
+    const invoice = (await invoices.findById('INV-1'))!;
     assert.equal(invoice.settled_delivered_count, 2);
     assert.equal(invoice.settled_returned_count, 1);
     assert.equal(invoice.settled_count, 3);
     assert.equal(invoice.return_rate, 33.3);
   });
 
-  it('reports no return rate when nothing has settled', () => {
-    seed('DT1', 100, 10, 'INV-1', 'In Transit');
+  it('reports no return rate when nothing has settled', async () => {
+    await seed('DT1', 100, 10, 'INV-1', 'In Transit');
 
-    assert.equal(invoices.findById('INV-1')!.return_rate, null);
-    assert.equal(invoices.totals().return_rate, null);
+    assert.equal((await invoices.findById('INV-1'))!.return_rate, null);
+    assert.equal((await invoices.totals()).return_rate, null);
   });
 
-  it('rates returns across the whole portfolio, invoiced or not', () => {
-    seed('DT1', 100, 10, 'INV-1', 'Delivered');
-    seed('DT2', 100, 10, null, 'Return');
-    seed('RR1', 0, 10, 'INV-1', 'Returned To Merchant', 'Return');
+  it('rates returns across the whole portfolio, invoiced or not', async () => {
+    await seed('DT1', 100, 10, 'INV-1', 'Delivered');
+    await seed('DT2', 100, 10, null, 'Return');
+    await seed('RR1', 0, 10, 'INV-1', 'Returned To Merchant', 'Return');
 
-    const totals = invoices.totals();
+    const totals = await invoices.totals();
     assert.equal(totals.settled_count, 2, 'the return leg is not a third parcel');
     assert.equal(totals.settled_returned_count, 1);
     assert.equal(totals.return_rate, 50);
   });
 
-  it('reports portfolio totals split by invoiced state', () => {
-    seed('DT1', 900, 80, 'INV-1', 'Delivered');
-    seed('DT2', 500, 60, 'INV-2', 'Delivered');
-    seed('DT3', 300, 50, null, 'Pending');
+  it('reports portfolio totals split by invoiced state', async () => {
+    await seed('DT1', 900, 80, 'INV-1', 'Delivered');
+    await seed('DT2', 500, 60, 'INV-2', 'Delivered');
+    await seed('DT3', 300, 50, null, 'Pending');
 
-    const totals = invoices.totals();
+    const totals = await invoices.totals();
     assert.equal(totals.invoice_count, 2);
     assert.equal(totals.invoiced_order_count, 2);
     assert.equal(totals.uninvoiced_order_count, 1);
@@ -134,24 +134,24 @@ describe('InvoiceRepository', () => {
     assert.equal(totals.net_payable, 1260);
   });
 
-  it('matches invoices by id, consignment id or merchant order id', () => {
-    seed('DT-ALPHA', 100, 10, 'INV-1', 'Delivered');
-    seed('DT-BETA', 100, 10, 'INV-2', 'Delivered');
+  it('matches invoices by id, consignment id or merchant order id', async () => {
+    await seed('DT-ALPHA', 100, 10, 'INV-1', 'Delivered');
+    await seed('DT-BETA', 100, 10, 'INV-2', 'Delivered');
 
     assert.deepEqual(
-      invoices.list({ search: 'ALPHA' }).map((invoice) => invoice.invoice_id),
+      (await invoices.list({ search: 'ALPHA' })).map((invoice) => invoice.invoice_id),
       ['INV-1'],
     );
     assert.deepEqual(
-      invoices.list({ search: 'INV-2' }).map((invoice) => invoice.invoice_id),
+      (await invoices.list({ search: 'INV-2' })).map((invoice) => invoice.invoice_id),
       ['INV-2'],
     );
   });
 });
 
 describe('OrderRepository', () => {
-  it('keeps synced values when a seed is written again', () => {
-    orders.upsertSeed({ consignmentId: 'DT1', amountToCollect: 900, deliveryFee: 80 });
+  it('keeps synced values when a seed is written again', async () => {
+    await orders.upsertSeed({ consignmentId: 'DT1', amountToCollect: 900, deliveryFee: 80 });
     orders.applySync({
       consignmentId: 'DT1',
       merchantOrderId: 'ORD-1',
@@ -161,17 +161,17 @@ describe('OrderRepository', () => {
       pathaoUpdatedAt: '2024-11-20 15:11:40',
     });
 
-    orders.upsertSeed({ consignmentId: 'DT1', recipientName: 'Late detail' });
+    await orders.upsertSeed({ consignmentId: 'DT1', recipientName: 'Late detail' });
 
-    const row = orders.findById('DT1')!;
+    const row = (await orders.findById('DT1'))!;
     assert.equal(row.invoice_id, 'INV-1');
     assert.equal(row.order_status, 'Delivered');
     assert.equal(row.recipient_name, 'Late detail');
     assert.equal(row.amount_to_collect, 900);
   });
 
-  it('queues never-synced orders ahead of recently synced ones', () => {
-    orders.upsertSeed({ consignmentId: 'DT-SYNCED' });
+  it('queues never-synced orders ahead of recently synced ones', async () => {
+    await orders.upsertSeed({ consignmentId: 'DT-SYNCED' });
     orders.applySync({
       consignmentId: 'DT-SYNCED',
       merchantOrderId: null,
@@ -180,8 +180,8 @@ describe('OrderRepository', () => {
       invoiceId: null,
       pathaoUpdatedAt: null,
     });
-    orders.upsertSeed({ consignmentId: 'DT-FRESH' });
+    await orders.upsertSeed({ consignmentId: 'DT-FRESH' });
 
-    assert.equal(orders.idsForSync()[0], 'DT-FRESH');
+    assert.equal((await orders.idsForSync())[0], 'DT-FRESH');
   });
 });

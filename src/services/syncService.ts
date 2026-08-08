@@ -47,7 +47,7 @@ export class SyncService {
     const { limit = 200, onlyUninvoiced = false, concurrency = 4 } = options;
     const startedAt = new Date().toISOString();
 
-    const ids = this.#orders.idsForSync({ limit, includeInvoiced: !onlyUninvoiced });
+    const ids = await this.#orders.idsForSync({ limit, includeInvoiced: !onlyUninvoiced });
     const failures: SyncFailure[] = [];
     let updated = 0;
     let newlyInvoiced = 0;
@@ -58,10 +58,10 @@ export class SyncService {
         const id = ids[cursor++];
         if (id === undefined) return;
 
-        const before = this.#orders.findById(id);
+        const before = await this.#orders.findById(id);
         try {
           const info = await this.#client.getOrderInfo(id);
-          this.#orders.applySync({
+          await this.#orders.applySync({
             consignmentId: id,
             merchantOrderId: info.merchant_order_id ?? null,
             orderStatus: info.order_status ?? null,

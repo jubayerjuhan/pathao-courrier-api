@@ -46,7 +46,7 @@ describe('TokenManager', () => {
 
     await manager.getAccessToken();
 
-    assert.deepEqual(store.read(), {
+    assert.deepEqual(await store.read(), {
       accessToken: 'access-1',
       refreshToken: 'refresh-1',
       tokenType: 'Bearer',
@@ -56,7 +56,7 @@ describe('TokenManager', () => {
 
   it('uses the refresh_token grant when the cached token is near expiry', async () => {
     const store = new MemoryTokenStore();
-    store.write({
+    await store.write({
       accessToken: 'stale',
       refreshToken: 'refresh-abc',
       tokenType: 'Bearer',
@@ -76,7 +76,7 @@ describe('TokenManager', () => {
 
   it('falls back to the password grant when the refresh token is rejected', async () => {
     const store = new MemoryTokenStore();
-    store.write({
+    await store.write({
       accessToken: 'stale',
       refreshToken: 'revoked',
       tokenType: 'Bearer',

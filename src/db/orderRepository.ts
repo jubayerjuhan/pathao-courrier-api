@@ -1,4 +1,4 @@
-import type { Database } from './index.js';
+import type { Database, Param } from './index.js';
 
 export interface OrderRow {
   consignment_id: string;
@@ -71,10 +71,9 @@ export class OrderRepository {
    * Seed values never clobber an existing non-null column: a later `upsertSeed`
    * for a row that sync has already enriched keeps the synced values.
    */
-  upsertSeed(seed: OrderSeed): void {
-    this.#db
-      .prepare(
-        `INSERT INTO orders (
+  async upsertSeed(seed: OrderSeed): Promise<void> {
+    await this.#db.run(
+      `INSERT INTO orders (
            consignment_id, merchant_order_id, store_id, recipient_name, recipient_phone,
            recipient_address, item_description, item_quantity, item_weight,
            amount_to_collect, delivery_fee, order_status, order_type, created_at
@@ -95,8 +94,7 @@ export class OrderRepository {
            -- an unset amount would otherwise arrive here as 0 and wipe the row.
            amount_to_collect = COALESCE(?, orders.amount_to_collect),
            delivery_fee      = COALESCE(?, orders.delivery_fee)`,
-      )
-      .run(
+      [
         seed.consignmentId,
         seed.merchantOrderId ?? null,
         seed.storeId ?? null,
@@ -114,14 +112,14 @@ export class OrderRepository {
         // Bound again for the DO UPDATE clause.
         seed.amountToCollect ?? null,
         seed.deliveryFee ?? null,
-      );
+      ],
+    );
   }
 
   /** Applies the latest short-info payload to a tracked order. */
-  applySync(patch: OrderSyncPatch): void {
-    this.#db
-      .prepare(
-        `UPDATE orders SET
+  async applySync(patch: OrderSyncPatch): Promise<void> {
+    await this.#db.run(
+      `UPDATE orders SET
            merchant_order_id = COALESCE(?, merchant_order_id),
            order_status      = COALESCE(?, order_status),
            order_status_slug = COALESCE(?, order_status_slug),
@@ -129,8 +127,7 @@ export class OrderRepository {
            pathao_updated_at = COALESCE(?, pathao_updated_at),
            last_synced_at    = ?
          WHERE consignment_id = ?`,
-      )
-      .run(
+      [
         patch.merchantOrderId,
         patch.orderStatus,
         patch.orderStatusSlug,
@@ -138,19 +135,17 @@ export class OrderRepository {
         patch.pathaoUpdatedAt,
         new Date().toISOString(),
         patch.consignmentId,
-      );
+      ],
+    );
   }
 
-  findById(consignmentId: string): OrderRow | null {
-    const row = this.#db
-      .prepare('SELECT * FROM orders WHERE consignment_id = ?')
-      .get(consignmentId) as OrderRow | undefined;
-    return row ?? null;
+  async findById(consignmentId: string): Promise<OrderRow | null> {
+    return this.#db.get<OrderRow>('SELECT * FROM orders WHERE consignment_id = ?', [consignmentId]);
   }
 
-  list(filters: OrderFilters = {}): OrderRow[] {
+  async list(filters: OrderFilters = {}): Promise<OrderRow[]> {
     const clauses: string[] = [];
-    const params: (string | number)[] = [];
+    const params: Param[] = [];
 
     if (filters.invoiceId !== undefined) {
       clauses.push('invoice_id = ?');
@@ -176,30 +171,28 @@ export class OrderRepository {
     }
 
     const where = clauses.length ? `WHERE ${clauses.join(' AND ')}` : '';
-    return this.#db
-      .prepare(
-        `SELECT * FROM orders ${where}
+    return this.#db.all<OrderRow>(
+      `SELECT * FROM orders ${where}
          ORDER BY COALESCE(pathao_updated_at, created_at) DESC, consignment_id DESC`,
-      )
-      .all(...params) as unknown as OrderRow[];
+      params,
+    );
   }
 
   /** Consignment ids worth re-checking, oldest sync first. */
-  idsForSync(options: { limit?: number; includeInvoiced?: boolean } = {}): string[] {
+  async idsForSync(options: { limit?: number; includeInvoiced?: boolean } = {}): Promise<string[]> {
     const { limit = 200, includeInvoiced = true } = options;
     const where = includeInvoiced ? '' : 'WHERE invoice_id IS NULL';
-    const rows = this.#db
-      .prepare(
-        `SELECT consignment_id FROM orders ${where}
+    const rows = await this.#db.all<{ consignment_id: string }>(
+      `SELECT consignment_id FROM orders ${where}
          ORDER BY last_synced_at IS NOT NULL, last_synced_at ASC
          LIMIT ?`,
-      )
-      .all(limit) as { consignment_id: string }[];
+      [limit],
+    );
     return rows.map((row) => row.consignment_id);
   }
 
-  count(): number {
-    const row = this.#db.prepare('SELECT COUNT(*) AS n FROM orders').get() as { n: number };
-    return Number(row.n);
+  async count(): Promise<number> {
+    const row = await this.#db.get<{ n: number }>('SELECT COUNT(*) AS n FROM orders');
+    return Number(row?.n ?? 0);
   }
 }

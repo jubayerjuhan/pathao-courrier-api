@@ -1,41 +1,8 @@
 import { createApp } from './app.js';
-import { loadConfig } from './config.js';
-import { openDatabase } from './db/index.js';
-import { InvoiceRepository } from './db/invoiceRepository.js';
-import { OrderRepository } from './db/orderRepository.js';
-import { SqliteTokenStore } from './db/sqliteTokenStore.js';
-import { PathaoClient } from './pathao/client.js';
-import { OrderService } from './services/orderService.js';
-import { SyncService } from './services/syncService.js';
-import type { AppContext } from './context.js';
+import { buildContext } from './bootstrap.js';
 
-function buildContext(): AppContext {
-  const config = loadConfig();
-  const db = openDatabase(config.databaseFile);
-
-  const client = new PathaoClient({
-    credentials: config.pathao,
-    tokenStore: new SqliteTokenStore(db),
-    timeoutMs: config.requestTimeoutMs,
-    tokenLeewaySeconds: config.tokenRefreshLeewaySeconds,
-  });
-
-  const orders = new OrderRepository(db);
-  const invoices = new InvoiceRepository(db);
-
-  return {
-    config,
-    db,
-    client,
-    orders,
-    invoices,
-    orderService: new OrderService(client, orders),
-    syncService: new SyncService(client, orders),
-  };
-}
-
-function main(): void {
-  const ctx = buildContext();
+async function main(): Promise<void> {
+  const ctx = await buildContext();
   const app = createApp(ctx);
 
   const server = app.listen(ctx.config.port, () => {
@@ -54,4 +21,7 @@ function main(): void {
   process.on('SIGTERM', () => shutdown('SIGTERM'));
 }
 
-main();
+main().catch((error: unknown) => {
+  console.error(error);
+  process.exit(1);
+});

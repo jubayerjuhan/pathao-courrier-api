@@ -75,7 +75,7 @@ ratio behind the percentage is always visible.
 
 ## Quick start
 
-Requires **Node.js 22.5+** (it uses the built-in `node:sqlite`).
+Requires **Node.js 20+**.
 
 ```bash
 npm install
@@ -110,36 +110,51 @@ shared test credentials published in Pathao's own documentation.
 
 ## Deploying
 
-**This app needs a disk, so it cannot run on a serverless host.** Both the
-tracked orders and the Pathao OAuth token live in one SQLite file. Serverless
-filesystems are read-only apart from per-instance scratch space that is wiped
-between cold starts, so on Vercel or Lambda the order history would disappear
-repeatedly and each instance would disagree about what exists.
+The tracked orders and the Pathao OAuth token both live in the database, so
+the one thing a deployment must get right is giving it somewhere durable to
+live. A serverless filesystem is not that — it is read-only apart from
+scratch space wiped between cold starts.
 
-`render.yaml` is a ready blueprint for [Render](https://render.com), which
-gives the process a persistent disk:
+The answer is not a disk but a database that is reachable over the network.
+[libSQL](https://github.com/tursodatabase/libsql) speaks SQLite's dialect over
+HTTP, so the same schema and the same queries work unchanged while the data
+sits on [Turso](https://turso.tech) instead of a local file. That is what
+makes a free serverless deployment possible.
 
-1. **New → Blueprint** in the Render dashboard, pointed at this repository.
-   Render reads `render.yaml` and proposes the service.
-2. Fill in the four values marked `sync: false` — `PATHAO_CLIENT_ID`,
-   `PATHAO_CLIENT_SECRET`, `PATHAO_USERNAME`, `PATHAO_PASSWORD`. They are
-   deliberately absent from the blueprint so credentials never reach git.
-3. Apply. First boot creates `/var/data/pathao.sqlite` on the mounted disk,
-   and `/api/health` answers once the schema is in place.
+### Vercel + Turso
+
+1. Create a free Turso database and copy its URL and auth token.
+2. In the Vercel project, set six environment variables:
+
+   | Variable | Value |
+   | --- | --- |
+   | `TURSO_DATABASE_URL` | `libsql://…` from Turso |
+   | `TURSO_AUTH_TOKEN` | the token Turso issued |
+   | `PATHAO_BASE_URL` | `https://api-hermes.pathao.com` for live |
+   | `PATHAO_CLIENT_ID` | from the merchant panel |
+   | `PATHAO_CLIENT_SECRET` | from the merchant panel |
+   | `PATHAO_USERNAME` / `PATHAO_PASSWORD` | merchant login |
+
+3. Deploy. `vercel.json` builds with `npm run build`, serves `public/`
+   statically, and routes `/api/*` into `api/index.ts`.
 4. Press **Import all from Pathao** to fill a fresh database in one go.
 
-Two constraints the blueprint encodes:
+Without `TURSO_DATABASE_URL` the app falls back to a local SQLite file at
+`DATABASE_FILE`, which is what `npm run dev` uses. Nothing else changes
+between the two.
 
-| Constraint | Reason |
-| --- | --- |
-| Paid instance type (`starter`) | Render's free instances cannot mount disks. |
-| A single instance, never scaled out | Each instance would mount its own copy of the database and disagree about which orders exist. |
+Two things worth knowing about the serverless shape:
 
-`NODE_VERSION` is pinned to 24 because `node:sqlite` only became available
-without a flag in Node 23.4. Render injects `PORT` itself; do not set it.
+- **`/api/orders/import-all` is bounded by the function timeout**, set to the
+  Hobby maximum of 60 seconds in `vercel.json`. A long history may need
+  several passes; `max_pages` in the request body limits how far one call
+  walks.
+- **The Pathao token is shared through the database**, not held in memory, so
+  cold starts reuse the issued token instead of each one burning a fresh
+  grant.
 
-Railway, Fly.io or any VPS work the same way — build with `npm run build`,
-start with `npm start`, mount a volume, and point `DATABASE_FILE` at it.
+Any host with a persistent disk works too — build with `npm run build`, start
+with `npm start`, and point `DATABASE_FILE` at the mounted volume.
 
 ---
 
@@ -263,7 +278,7 @@ src/
     tokenStore.ts         persistence seam for the OAuth token
     types.ts, errors.ts
   db/
-    index.ts              node:sqlite connection + schema
+    index.ts              libSQL connection + schema
     orderRepository.ts    tracked consignments
     invoiceRepository.ts  the invoice aggregation (grouping lives here)
     sqliteTokenStore.ts
@@ -314,6 +329,8 @@ mapping, invoice aggregation and the HTTP routes without touching Pathao.
 | `PATHAO_USERNAME` | — | required |
 | `PATHAO_PASSWORD` | — | required |
 | `PORT` | `3000` | HTTP port |
-| `DATABASE_FILE` | `./data/pathao.sqlite` | token + tracked orders |
+| `TURSO_DATABASE_URL` | — | hosted libSQL database; takes precedence over `DATABASE_FILE` |
+| `TURSO_AUTH_TOKEN` | — | required when `TURSO_DATABASE_URL` is a `libsql://` URL |
+| `DATABASE_FILE` | `./data/pathao.sqlite` | local fallback holding token + tracked orders |
 | `TOKEN_REFRESH_LEEWAY_SECONDS` | `300` | renew this early |
 | `PATHAO_REQUEST_TIMEOUT_MS` | `20000` | outbound timeout |

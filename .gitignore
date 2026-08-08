@@ -9,3 +9,6 @@ data/
 *.sqlite
 *.sqlite-journal
 *.db
+
+# Vercel CLI link
+.vercel

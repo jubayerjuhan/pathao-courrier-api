@@ -16,11 +16,21 @@ export function createApp(ctx: AppContext): Express {
   app.use(express.json({ limit: '2mb' }));
 
   app.get('/api/health', (_req, res) => {
-    res.json({
-      status: 'ok',
-      base_url: ctx.config.pathao.baseUrl,
-      tracked_orders: ctx.orders.count(),
-    });
+    void ctx.orders
+      .count()
+      .then((trackedOrders) => {
+        res.json({
+          status: 'ok',
+          base_url: ctx.config.pathao.baseUrl,
+          tracked_orders: trackedOrders,
+        });
+      })
+      .catch((error: unknown) => {
+        res.status(503).json({
+          status: 'degraded',
+          error: { message: error instanceof Error ? error.message : String(error) },
+        });
+      });
   });
 
   app.use('/api/invoices', invoiceRoutes(ctx));

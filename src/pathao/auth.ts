@@ -44,7 +44,7 @@ export class TokenManager {
 
   /** Returns a token that is valid now, issuing or refreshing one if needed. */
   async getAccessToken(): Promise<string> {
-    const cached = this.#store.read();
+    const cached = await this.#store.read();
     if (cached && cached.expiresAt - this.#leewayMs > this.#now()) {
       return cached.accessToken;
     }
@@ -54,8 +54,8 @@ export class TokenManager {
 
   /** Discards the cached token and issues a new one. Used after a 401. */
   async forceRenew(): Promise<string> {
-    const previous = this.#store.read();
-    this.#store.clear();
+    const previous = await this.#store.read();
+    await this.#store.clear();
     const token = await this.#renew(previous);
     return token.accessToken;
   }
@@ -118,7 +118,7 @@ export class TokenManager {
     return this.#persist(response);
   }
 
-  #persist(response: IssueTokenResponse): StoredToken {
+  async #persist(response: IssueTokenResponse): Promise<StoredToken> {
     if (!response?.access_token) {
       throw new Error('Pathao issue-token response did not contain an access_token.');
     }
@@ -128,7 +128,7 @@ export class TokenManager {
       tokenType: response.token_type ?? 'Bearer',
       expiresAt: this.#now() + (response.expires_in ?? 0) * 1000,
     };
-    this.#store.write(token);
+    await this.#store.write(token);
     return token;
   }
 }
