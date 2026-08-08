@@ -1,0 +1,60 @@
+# Render blueprint — https://render.com/docs/blueprint-spec
+#
+# This app keeps everything in one SQLite file: the tracked orders and the
+# Pathao OAuth token. That needs a real disk, which is why it is hosted here
+# rather than on a serverless platform, where the filesystem is read-only and
+# per-instance scratch space is wiped between cold starts.
+#
+# Note the disk forces two things:
+#   - a paid instance type (free instances cannot mount disks), and
+#   - a single instance. Two instances would each mount their own copy and
+#     disagree about which orders exist, so do not scale this past one.
+services:
+  - type: web
+    name: pathao-courier-invoices
+    runtime: node
+    plan: starter
+    # Closest region to Bangladesh, where the Pathao API lives.
+    region: singapore
+    branch: main
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    # Boots the app for real: the route reads the order count out of SQLite, so
+    # a passing check means the disk mounted and the schema applied.
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+
+    disk:
+      name: pathao-data
+      mountPath: /var/data
+      sizeGB: 1
+
+    envVars:
+      # node:sqlite is unflagged from Node 23.4 onward; pin so a Render default
+      # of 22.x cannot silently break the import.
+      - key: NODE_VERSION
+        value: 24.15.0
+
+      # On the mounted disk, so it survives deploys and restarts.
+      - key: DATABASE_FILE
+        value: /var/data/pathao.sqlite
+
+      # Live merchant API. Sandbox is https://courier-api-sandbox.pathao.com
+      - key: PATHAO_BASE_URL
+        value: https://api-hermes.pathao.com
+
+      # Real merchant credentials — set these in the Render dashboard.
+      # sync: false keeps them out of this file and out of git.
+      - key: PATHAO_CLIENT_ID
+        sync: false
+      - key: PATHAO_CLIENT_SECRET
+        sync: false
+      - key: PATHAO_USERNAME
+        sync: false
+      - key: PATHAO_PASSWORD
+        sync: false
+
+      - key: TOKEN_REFRESH_LEEWAY_SECONDS
+        value: 300
+      - key: PATHAO_REQUEST_TIMEOUT_MS
+        value: 20000

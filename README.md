@@ -108,6 +108,41 @@ shared test credentials published in Pathao's own documentation.
 
 ---
 
+## Deploying
+
+**This app needs a disk, so it cannot run on a serverless host.** Both the
+tracked orders and the Pathao OAuth token live in one SQLite file. Serverless
+filesystems are read-only apart from per-instance scratch space that is wiped
+between cold starts, so on Vercel or Lambda the order history would disappear
+repeatedly and each instance would disagree about what exists.
+
+`render.yaml` is a ready blueprint for [Render](https://render.com), which
+gives the process a persistent disk:
+
+1. **New → Blueprint** in the Render dashboard, pointed at this repository.
+   Render reads `render.yaml` and proposes the service.
+2. Fill in the four values marked `sync: false` — `PATHAO_CLIENT_ID`,
+   `PATHAO_CLIENT_SECRET`, `PATHAO_USERNAME`, `PATHAO_PASSWORD`. They are
+   deliberately absent from the blueprint so credentials never reach git.
+3. Apply. First boot creates `/var/data/pathao.sqlite` on the mounted disk,
+   and `/api/health` answers once the schema is in place.
+4. Press **Import all from Pathao** to fill a fresh database in one go.
+
+Two constraints the blueprint encodes:
+
+| Constraint | Reason |
+| --- | --- |
+| Paid instance type (`starter`) | Render's free instances cannot mount disks. |
+| A single instance, never scaled out | Each instance would mount its own copy of the database and disagree about which orders exist. |
+
+`NODE_VERSION` is pinned to 24 because `node:sqlite` only became available
+without a flag in Node 23.4. Render injects `PORT` itself; do not set it.
+
+Railway, Fly.io or any VPS work the same way — build with `npm run build`,
+start with `npm start`, mount a volume, and point `DATABASE_FILE` at it.
+
+---
+
 ## The dashboard
 
 | View | What it shows |
